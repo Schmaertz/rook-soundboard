@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Rook Calls">
+    <meta name="theme-color" content="#1a1a2e">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a1a2e' width='192' height='192'/><path fill='%23e8d4a8' d='M96 40c-8 0-14 6-14 14v40c0 8 6 14 14 14s14-6 14-14V54c0-8-6-14-14-14zm-24 32c-4 0-8 4-8 8s4 8 8 8 8-4 8-8-4-8-8-8zm48 0c-4 0-8 4-8 8s4 8 8 8 8-4 8-8-4-8-8-8zm-40 24c-6 0-12 4-14 10l-20 56c-2 6 2 12 8 12h84c6 0 10-6 8-12l-20-56c-2-6-8-10-14-10H80z'/></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%231a1a2e' width='192' height='192'/><path fill='%23e8d4a8' d='M96 40c-8 0-14 6-14 14v40c0 8 6 14 14 14s14-6 14-14V54c0-8-6-14-14-14zm-24 32c-4 0-8 4-8 8s4 8 8 8 8-4 8-8-4-8-8-8zm48 0c-4 0-8 4-8 8s4 8 8 8 8-4 8-8-4-8-8-8zm-40 24c-6 0-12 4-14 10l-20 56c-2 6 2 12 8 12h84c6 0 10-6 8-12l-20-56c-2-6-8-10-14-10H80z'/></svg>">
+    <title>Rook Calls</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 50%, #16213e 100%);
+            color: #e8d4a8;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: max(env(safe-area-inset-top, 0px), 12px) 12px 12px 12px;
+            overflow-x: hidden;
+        }
+
+        header {
+            width: 100%;
+            max-width: 500px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 32px;
+            margin-bottom: 4px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: #a09060;
+            margin-bottom: 16px;
+        }
+
+        .rook-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
+            opacity: 0.8;
+        }
+
+        .controls {
+            width: 100%;
+            max-width: 500px;
+            margin-bottom: 24px;
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: 12px;
+            padding: 16px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(232, 212, 168, 0.1);
+        }
+
+        .control-group {
+            margin-bottom: 12px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: #a09060;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .volume-slider {
+            width: 100%;
+            height: 5px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(232, 212, 168, 0.1);
+            border-radius: 5px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #d4af37;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(212, 175, 55, 0.4);
+            transition: box-shadow 0.2s;
+        }
+
+        .volume-slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #d4af37;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 8px rgba(212, 175, 55, 0.4);
+            transition: box-shadow 0.2s;
+        }
+
+        .volume-slider:active::-webkit-slider-thumb {
+            box-shadow: 0 0 16px rgba(212, 175, 55, 0.8);
+        }
+
+        .volume-slider:active::-moz-range-thumb {
+            box-shadow: 0 0 16px rgba(212, 175, 55, 0.8);
+        }
+
+        .volume-value {
+            display: inline-block;
+            font-size: 12px;
+            color: #d4af37;
+            margin-left: 8px;
+            font-weight: 600;
+            min-width: 35px;
+        }
+
+        .button-grid {
+            width: 100%;
+            max-width: 500px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .sound-button {
+            aspect-ratio: 1;
+            border: none;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #2d3561 0%, #1a1f38 100%);
+            color: #e8d4a8;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            touch-action: manipulation;
+            transition: all 0.15s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(232, 212, 168, 0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+
+        .sound-button:active {
+            transform: scale(0.95);
+        }
+
+        .sound-button.playing {
+            background: linear-gradient(135deg, #d4af37 0%, #b8931d 100%);
+            color: #0f0f1e;
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.6), inset 0 0 10px rgba(0, 0, 0, 0.2);
+            animation: pulse 0.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                box-shadow: 0 0 20px rgba(212, 175, 55, 0.6), inset 0 0 10px rgba(0, 0, 0, 0.2);
+            }
+            50% {
+                box-shadow: 0 0 30px rgba(212, 175, 55, 1), inset 0 0 10px rgba(0, 0, 0, 0.2);
+            }
+        }
+
+        .sound-button.looping {
+            border: 2px solid #d4af37;
+            border-style: dashed;
+        }
+
+        .sound-button-label {
+            font-size: 14px;
+        }
+
+        .sound-button-sublabel {
+            font-size: 10px;
+            opacity: 0.7;
+            font-weight: 400;
+        }
+
+        .sound-button.playing .sound-button-sublabel {
+            opacity: 1;
+        }
+
+        .status-bar {
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+            font-size: 12px;
+            color: #a09060;
+            padding: 12px;
+            min-height: 16px;
+        }
+
+        .load-hint {
+            font-size: 12px;
+            color: #a09060;
+            text-align: center;
+            padding: 12px;
+            opacity: 0.8;
+        }
+
+        @supports (padding: max(0px)) {
+            body {
+                padding-bottom: max(12px, env(safe-area-inset-bottom));
+            }
+        }
+
+        /* Grid layout for 5 buttons - center the last one */
+        .button-grid.grid-5 {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .button-grid.grid-5 .sound-button:nth-child(5) {
+            grid-column: 1 / 2;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 28px;
+            }
+
+            .sound-button-label {
+                font-size: 13px;
+            }
+
+            .sound-button-sublabel {
+                font-size: 9px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="rook-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+                <!-- Rook silhouette -->
+                <ellipse cx="50" cy="70" rx="28" ry="18" fill="#e8d4a8" opacity="0.1"/>
+                <!-- Body -->
+                <ellipse cx="50" cy="55" rx="18" ry="22" fill="#1a1a2e" stroke="#e8d4a8" stroke-width="1.5"/>
+                <!-- Head -->
+                <circle cx="50" cy="35" r="14" fill="#1a1a2e" stroke="#e8d4a8" stroke-width="1.5"/>
+                <!-- Eye -->
+                <circle cx="56" cy="32" r="2.5" fill="#d4af37"/>
+                <!-- Beak -->
+                <path d="M 64 35 L 72 34 L 64 37 Z" fill="#d4af37" stroke="#a09060" stroke-width="0.5"/>
+                <!-- Wing detail -->
+                <path d="M 36 50 Q 40 60 38 70" stroke="#e8d4a8" stroke-width="1.5" fill="none" opacity="0.6"/>
+                <!-- Tail feathers -->
+                <path d="M 32 60 L 25 75" stroke="#e8d4a8" stroke-width="1.5" opacity="0.8"/>
+                <path d="M 35 62 L 28 78" stroke="#e8d4a8" stroke-width="1.5" opacity="0.6"/>
+                <!-- Legs -->
+                <line x1="45" y1="77" x2="45" y2="88" stroke="#e8d4a8" stroke-width="1.5"/>
+                <line x1="55" y1="77" x2="55" y2="88" stroke="#e8d4a8" stroke-width="1.5"/>
+            </svg>
+        </div>
+        <h1>Rook Calls</h1>
+        <p class="subtitle">Bird Soundboard</p>
+    </header>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="masterVolume">Master Volume</label>
+            <div style="display: flex; align-items: center;">
+                <input 
+                    type="range" 
+                    id="masterVolume" 
+                    min="0" 
+                    max="100" 
+                    value="70" 
+                    class="volume-slider"
+                >
+                <span class="volume-value"><span id="volumeValue">70</span>%</span>
+            </div>
+        </div>
+        <div class="control-group">
+            <p style="font-size: 11px; color: #a09060; margin-top: 8px;">
+                💡 Long-press a button to toggle loop mode (dashed border)
+            </p>
+        </div>
+    </div>
+
+    <div class="button-grid grid-5" id="buttonGrid">
+        <!-- Buttons will be generated by JavaScript -->
+    </div>
+
+    <div class="status-bar" id="statusBar"></div>
+
+    <div class="load-hint" id="loadHint">
+        Tap any button to load sounds...
+    </div>
+
+    <script>
+        // ===== CONFIGURATION =====
+        const SOUND_CONFIG = [
+            { id: 'rook1', label: 'Caw', file: 'rook1.wav' },
+            { id: 'rook2', label: 'Alarm', file: 'rook2.wav' },
+            { id: 'rook3', label: 'Chatter', file: 'rook3.wav' },
+            { id: 'rook4', label: 'Croak', file: 'rook4.wav' },
+            { id: 'rook5', label: 'Chirp', file: 'rook5.wav' },
+        ];
+
+        // ===== STATE MANAGEMENT =====
+        let audioContext = null;
+        let audioBuffers = {};
+        let audioSources = {};
+        let isLoaded = false;
+        let playingButtons = new Set();
+        let loopingButtons = new Set();
+        let masterVolume = 0.7;
+        let longPressTimers = {};
+
+        // ===== INITIALIZATION =====
+        window.addEventListener('DOMContentLoaded', initializeApp);
+
+        function initializeApp() {
+            // Register service worker for offline support
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('service-worker.js').catch(err => {
+                    console.log('Service worker registration failed:', err);
+                });
+            }
+
+            // Create audio context (will be initialized on first user interaction)
+            setupAudioContext();
+
+            // Create button grid
+            createButtonGrid();
+
+            // Setup volume slider
+            document.getElementById('masterVolume').addEventListener('input', (e) => {
+                masterVolume = e.target.value / 100;
+                document.getElementById('volumeValue').textContent = e.target.value;
+                updateAllSourceVolumes();
+            });
+
+            // Prevent double-tap zoom on buttons
+            document.querySelectorAll('.sound-button').forEach(btn => {
+                btn.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                });
+            });
+        }
+
+        function setupAudioContext() {
+            if (audioContext === null) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('AudioContext created:', audioContext.state);
+            }
+        }
+
+        function createButtonGrid() {
+            const grid = document.getElementById('buttonGrid');
+            grid.innerHTML = '';
+
+            SOUND_CONFIG.forEach(config => {
+                const button = document.createElement('button');
+                button.className = 'sound-button';
+                button.id = `btn-${config.id}`;
+                button.innerHTML = `
+                    <span class="sound-button-label">${config.label}</span>
+                    <span class="sound-button-sublabel">${config.file}</span>
+                `;
+
+                // Tap to play
+                button.addEventListener('click', () => {
+                    loadSoundsIfNeeded().then(() => {
+                        playSound(config.id);
+                    });
+                });
+
+                // Long-press to toggle loop
+                button.addEventListener('touchstart', (e) => {
+                    longPressTimers[config.id] = setTimeout(() => {
+                        toggleLoop(config.id, button);
+                    }, 500);
+                });
+
+                button.addEventListener('touchend', () => {
+                    clearTimeout(longPressTimers[config.id]);
+                });
+
+                button.addEventListener('touchcancel', () => {
+                    clearTimeout(longPressTimers[config.id]);
+                });
+
+                grid.appendChild(button);
+            });
+        }
+
+        // ===== AUDIO LOADING =====
+        async function loadSoundsIfNeeded() {
+            if (isLoaded) return;
+
+            setupAudioContext();
+
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+
+            document.getElementById('loadHint').textContent = 'Loading sounds...';
+
+            try {
+                for (const config of SOUND_CONFIG) {
+                    await loadSound(config.id, config.file);
+                }
+                isLoaded = true;
+                document.getElementById('loadHint').textContent = '';
+                document.getElementById('statusBar').textContent = '✓ Sounds loaded and ready';
+                setTimeout(() => {
+                    document.getElementById('statusBar').textContent = '';
+                }, 2000);
+            } catch (err) {
+                console.error('Error loading sounds:', err);
+                document.getElementById('loadHint').textContent = '⚠ Error loading sounds';
+            }
+        }
+
+        async function loadSound(soundId, fileName) {
+            if (audioBuffers[soundId]) return;
+
+            try {
+                const response = await fetch(`sounds/${fileName}`);
+                if (!response.ok) throw new Error(`Failed to load ${fileName}`);
+
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                audioBuffers[soundId] = audioBuffer;
+                console.log(`Loaded: ${fileName}`);
+            } catch (err) {
+                console.error(`Error loading ${fileName}:`, err);
+                throw err;
+            }
+        }
+
+        // ===== PLAYBACK CONTROL =====
+        function playSound(soundId) {
+            if (!audioBuffers[soundId]) return;
+
+            // Stop any existing source for this sound
+            if (audioSources[soundId]) {
+                try {
+                    audioSources[soundId].stop();
+                } catch (e) {
+                    // Source already stopped
+                }
+            }
+
+            // Create new source
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffers[soundId];
+            source.loop = loopingButtons.has(soundId);
+
+            // Create gain node for individual volume control
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = masterVolume;
+
+            // Connect and play
+            source.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            source.start(0);
+
+            // Store for cleanup
+            audioSources[soundId] = source;
+            playingButtons.add(soundId);
+
+            // Update UI
+            updateButtonUI(soundId);
+
+            // Handle stop event
+            source.onended = () => {
+                playingButtons.delete(soundId);
+                updateButtonUI(soundId);
+            };
+        }
+
+        function toggleLoop(soundId, button) {
+            if (loopingButtons.has(soundId)) {
+                loopingButtons.delete(soundId);
+                button.classList.remove('looping');
+            } else {
+                loopingButtons.add(soundId);
+                button.classList.add('looping');
+            }
+        }
+
+        function updateButtonUI(soundId) {
+            const button = document.getElementById(`btn-${soundId}`);
+            if (playingButtons.has(soundId)) {
+                button.classList.add('playing');
+            } else {
+                button.classList.remove('playing');
+            }
+        }
+
+        function updateAllSourceVolumes() {
+            Object.keys(audioSources).forEach(soundId => {
+                const source = audioSources[soundId];
+                if (source && source.context && source.context.state === 'running') {
+                    // Note: BufferSource doesn't have direct gain control,
+                    // but we can update the gain node if we stored it
+                }
+            });
+        }
+
+        // Resume audio context on user interaction (iOS requirement)
+        document.addEventListener('click', () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        });
+
+        document.addEventListener('touchstart', () => {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        });
+    </script>
+</body>
+</html>
