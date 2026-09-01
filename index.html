@@ -224,6 +224,18 @@
             text-align: center;
             padding: 12px;
             opacity: 0.8;
+            min-height: 16px;
+            word-wrap: break-word;
+            white-space: normal;
+        }
+
+        .load-hint[style*="⚠"] {
+            color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+            border-radius: 8px;
+            padding: 16px;
+            border-left: 3px solid #ff6b6b;
+            opacity: 1;
         }
 
         @supports (padding: max(0px)) {
@@ -342,6 +354,11 @@
         window.addEventListener('DOMContentLoaded', initializeApp);
 
         function initializeApp() {
+            // Log browser/device info for debugging
+            console.log('User Agent:', navigator.userAgent);
+            console.log('Platform:', navigator.platform || 'Unknown');
+            console.log('Web Audio API:', typeof AudioContext !== 'undefined' ? 'Supported' : 'Not supported');
+            
             // Register service worker for offline support
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('service-worker.js').catch(err => {
@@ -395,7 +412,18 @@
                         console.log('AudioContext resumed:', audioContext.state);
                     } catch (err) {
                         console.error('Failed to resume AudioContext:', err);
-                        throw err;
+                        // On some browsers, resume may fail even with user gesture
+                        // Try a different approach - create a new context
+                        if (audioContext.state === 'suspended') {
+                            console.warn('Resume failed, attempting workaround...');
+                            audioContext = null;
+                            setupAudioContext();
+                            if (audioContext && audioContext.state === 'suspended') {
+                                await audioContext.resume().catch(e => {
+                                    console.warn('Workaround also failed:', e);
+                                });
+                            }
+                        }
                     } finally {
                         contextResuming = false;
                     }
@@ -471,18 +499,22 @@
             document.getElementById('loadHint').textContent = 'Loading sounds...';
 
             try {
+                console.log(`Loading ${SOUND_CONFIG.length} sounds...`);
                 for (const config of SOUND_CONFIG) {
                     await loadSound(config.id, config.file);
                 }
                 isLoaded = true;
                 document.getElementById('loadHint').textContent = '';
                 document.getElementById('statusBar').textContent = '✓ Sounds loaded and ready';
+                console.log('All sounds loaded successfully');
                 setTimeout(() => {
                     document.getElementById('statusBar').textContent = '';
                 }, 2000);
             } catch (err) {
                 console.error('Error loading sounds:', err);
-                document.getElementById('loadHint').textContent = '⚠ Error loading sounds: ' + err.message;
+                const errorMsg = `⚠ ${err.message}`;
+                document.getElementById('loadHint').textContent = errorMsg;
+                document.getElementById('statusBar').textContent = `Check console for details`;
                 throw err;
             }
         }
@@ -491,12 +523,25 @@
             if (audioBuffers[soundId]) return;
 
             try {
-                const response = await fetch(`sounds/${fileName}`);
+                // Use absolute URL to ensure Firefox iOS can find the file
+                const soundUrl = new URL(`sounds/${fileName}`, window.location.href).href;
+                console.log(`Loading: ${soundUrl}`);
+                
+                const response = await fetch(soundUrl, { 
+                    mode: 'cors',
+                    cache: 'default'
+                });
+                
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: Failed to load ${fileName}`);
                 }
 
+                if (!response.body) {
+                    throw new Error('Response has no body');
+                }
+
                 const arrayBuffer = await response.arrayBuffer();
+                console.log(`Fetched ${fileName}: ${arrayBuffer.byteLength} bytes`);
                 
                 if (!audioContext) {
                     throw new Error('AudioContext not initialized');
@@ -504,7 +549,7 @@
                 
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 audioBuffers[soundId] = audioBuffer;
-                console.log(`Loaded: ${fileName}`);
+                console.log(`Decoded and loaded: ${fileName} (${audioBuffer.duration.toFixed(2)}s)`);
             } catch (err) {
                 console.error(`Error loading ${fileName}:`, err);
                 throw new Error(`Failed to load ${fileName}: ${err.message}`);
@@ -513,7 +558,15 @@
 
         // ===== PLAYBACK CONTROL =====
         function playSound(soundId) {
-            if (!audioBuffers[soundId]) return;
+            if (!audioBuffers[soundId]) {
+                console.warn(`No audio buffer for ${soundId}`);
+                return;
+            }
+
+            if (!audioContext) {
+                console.error('AudioContext not available');
+                return;
+            }
 
             // Stop any existing source for this sound
             if (audioSources[soundId]) {
@@ -521,42 +574,50 @@
                     audioSources[soundId].stop();
                 } catch (e) {
                     // Source already stopped
+                    console.log(`Previous source for ${soundId} already stopped`);
                 }
             }
 
-            // Create new source
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffers[soundId];
-            source.loop = loopingButtons.has(soundId);
-
-            // Create gain node for individual volume control
-            const gainNode = audioContext.createGain();
-            gainNode.gain.value = masterVolume;
-
-            // Connect and play
-            source.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
             try {
+                // Create new source
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffers[soundId];
+                
+                // Set loop based on looping state
+                const shouldLoop = loopingButtons.has(soundId);
+                source.loop = shouldLoop;
+                console.log(`Playing ${soundId} (loop: ${shouldLoop})`);
+
+                // Create gain node for individual volume control
+                const gainNode = audioContext.createGain();
+                gainNode.gain.value = masterVolume;
+
+                // Connect: source -> gain -> destination
+                source.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                // Start playback
                 source.start(0);
+
+                // Store for cleanup
+                audioSources[soundId] = source;
+                gainNodes[soundId] = gainNode;
+                playingButtons.add(soundId);
+
+                // Update UI
+                updateButtonUI(soundId);
+
+                // Handle stop event
+                source.onended = () => {
+                    console.log(`Playback ended: ${soundId}`);
+                    playingButtons.delete(soundId);
+                    updateButtonUI(soundId);
+                };
             } catch (err) {
-                console.error('Error starting audio:', err);
-                return;
-            }
-
-            // Store for cleanup
-            audioSources[soundId] = source;
-            gainNodes[soundId] = gainNode;
-            playingButtons.add(soundId);
-
-            // Update UI
-            updateButtonUI(soundId);
-
-            // Handle stop event
-            source.onended = () => {
+                console.error(`Error playing ${soundId}:`, err);
                 playingButtons.delete(soundId);
                 updateButtonUI(soundId);
-            };
+            }
         }
 
         function toggleLoop(soundId, button) {
