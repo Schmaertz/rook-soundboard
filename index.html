@@ -330,11 +330,13 @@
         let audioContext = null;
         let audioBuffers = {};
         let audioSources = {};
+        let gainNodes = {};
         let isLoaded = false;
         let playingButtons = new Set();
         let loopingButtons = new Set();
         let masterVolume = 0.7;
         let longPressTimers = {};
+        let contextResuming = false;
 
         // ===== INITIALIZATION =====
         window.addEventListener('DOMContentLoaded', initializeApp);
@@ -347,9 +349,6 @@
                 });
             }
 
-            // Create audio context (will be initialized on first user interaction)
-            setupAudioContext();
-
             // Create button grid
             createButtonGrid();
 
@@ -359,20 +358,51 @@
                 document.getElementById('volumeValue').textContent = e.target.value;
                 updateAllSourceVolumes();
             });
-
-            // Prevent double-tap zoom on buttons
-            document.querySelectorAll('.sound-button').forEach(btn => {
-                btn.addEventListener('touchend', (e) => {
-                    e.preventDefault();
-                });
-            });
         }
 
         function setupAudioContext() {
             if (audioContext === null) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                console.log('AudioContext created:', audioContext.state);
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log('AudioContext created:', audioContext.state);
+                } catch (err) {
+                    console.error('Failed to create AudioContext:', err);
+                    alert('Web Audio API not supported on this device');
+                }
             }
+        }
+
+        async function ensureAudioContextRunning() {
+            setupAudioContext();
+            
+            if (!audioContext) {
+                throw new Error('AudioContext not available');
+            }
+
+            // Handle suspended state (required on iOS and some Android)
+            if (audioContext.state === 'suspended') {
+                if (contextResuming) {
+                    // Wait for resume in progress
+                    let timeout = 0;
+                    while (audioContext.state === 'suspended' && timeout < 100) {
+                        await new Promise(r => setTimeout(r, 10));
+                        timeout++;
+                    }
+                } else {
+                    contextResuming = true;
+                    try {
+                        await audioContext.resume();
+                        console.log('AudioContext resumed:', audioContext.state);
+                    } catch (err) {
+                        console.error('Failed to resume AudioContext:', err);
+                        throw err;
+                    } finally {
+                        contextResuming = false;
+                    }
+                }
+            }
+            
+            return audioContext;
         }
 
         function createButtonGrid() {
@@ -388,26 +418,45 @@
                     <span class="sound-button-sublabel">${config.file}</span>
                 `;
 
+                let longPressTimer = null;
+                let touchStarted = false;
+
                 // Tap to play
-                button.addEventListener('click', () => {
-                    loadSoundsIfNeeded().then(() => {
+                button.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try {
+                        await ensureAudioContextRunning();
+                        await loadSoundsIfNeeded();
                         playSound(config.id);
-                    });
+                    } catch (err) {
+                        console.error('Error playing sound:', err);
+                        document.getElementById('loadHint').textContent = '⚠ Error: ' + err.message;
+                    }
                 });
 
                 // Long-press to toggle loop
                 button.addEventListener('touchstart', (e) => {
-                    longPressTimers[config.id] = setTimeout(() => {
-                        toggleLoop(config.id, button);
+                    touchStarted = true;
+                    longPressTimer = setTimeout(() => {
+                        if (touchStarted) {
+                            toggleLoop(config.id, button);
+                        }
                     }, 500);
                 });
 
-                button.addEventListener('touchend', () => {
-                    clearTimeout(longPressTimers[config.id]);
+                button.addEventListener('touchend', (e) => {
+                    touchStarted = false;
+                    if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                    }
                 });
 
-                button.addEventListener('touchcancel', () => {
-                    clearTimeout(longPressTimers[config.id]);
+                button.addEventListener('touchcancel', (e) => {
+                    touchStarted = false;
+                    if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                    }
                 });
 
                 grid.appendChild(button);
@@ -418,12 +467,7 @@
         async function loadSoundsIfNeeded() {
             if (isLoaded) return;
 
-            setupAudioContext();
-
-            if (audioContext.state === 'suspended') {
-                await audioContext.resume();
-            }
-
+            const ctx = await ensureAudioContextRunning();
             document.getElementById('loadHint').textContent = 'Loading sounds...';
 
             try {
@@ -438,7 +482,8 @@
                 }, 2000);
             } catch (err) {
                 console.error('Error loading sounds:', err);
-                document.getElementById('loadHint').textContent = '⚠ Error loading sounds';
+                document.getElementById('loadHint').textContent = '⚠ Error loading sounds: ' + err.message;
+                throw err;
             }
         }
 
@@ -447,15 +492,22 @@
 
             try {
                 const response = await fetch(`sounds/${fileName}`);
-                if (!response.ok) throw new Error(`Failed to load ${fileName}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: Failed to load ${fileName}`);
+                }
 
                 const arrayBuffer = await response.arrayBuffer();
+                
+                if (!audioContext) {
+                    throw new Error('AudioContext not initialized');
+                }
+                
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 audioBuffers[soundId] = audioBuffer;
                 console.log(`Loaded: ${fileName}`);
             } catch (err) {
                 console.error(`Error loading ${fileName}:`, err);
-                throw err;
+                throw new Error(`Failed to load ${fileName}: ${err.message}`);
             }
         }
 
@@ -484,10 +536,17 @@
             // Connect and play
             source.connect(gainNode);
             gainNode.connect(audioContext.destination);
-            source.start(0);
+            
+            try {
+                source.start(0);
+            } catch (err) {
+                console.error('Error starting audio:', err);
+                return;
+            }
 
             // Store for cleanup
             audioSources[soundId] = source;
+            gainNodes[soundId] = gainNode;
             playingButtons.add(soundId);
 
             // Update UI
@@ -520,27 +579,34 @@
         }
 
         function updateAllSourceVolumes() {
-            Object.keys(audioSources).forEach(soundId => {
-                const source = audioSources[soundId];
-                if (source && source.context && source.context.state === 'running') {
-                    // Note: BufferSource doesn't have direct gain control,
-                    // but we can update the gain node if we stored it
+            Object.keys(gainNodes).forEach(soundId => {
+                const gainNode = gainNodes[soundId];
+                if (gainNode) {
+                    gainNode.gain.value = masterVolume;
                 }
             });
         }
 
         // Resume audio context on user interaction (iOS requirement)
-        document.addEventListener('click', () => {
+        document.addEventListener('click', async () => {
             if (audioContext && audioContext.state === 'suspended') {
-                audioContext.resume();
+                try {
+                    await audioContext.resume();
+                } catch (err) {
+                    console.log('Could not resume AudioContext on click:', err);
+                }
             }
-        });
+        }, { once: true });
 
-        document.addEventListener('touchstart', () => {
+        document.addEventListener('touchstart', async () => {
             if (audioContext && audioContext.state === 'suspended') {
-                audioContext.resume();
+                try {
+                    await audioContext.resume();
+                } catch (err) {
+                    console.log('Could not resume AudioContext on touch:', err);
+                }
             }
-        });
+        }, { once: true });
     </script>
 </body>
 </html>
