@@ -1,13 +1,13 @@
-const CACHE_NAME = 'rook-soundboard-v1';
+const CACHE_NAME = 'rook-soundboard-v2';
 const urlsToCache = [
-    '/',
-    '/index.html',
-    '/manifest.json',
-    '/sounds/rook1.wav',
-    '/sounds/rook2.wav',
-    '/sounds/rook3.wav',
-    '/sounds/rook4.wav',
-    '/sounds/rook5.wav',
+    './',
+    './index.html',
+    './manifest.json',
+    './sounds/rook1.wav',
+    './sounds/rook2.wav',
+    './sounds/rook3.wav',
+    './sounds/rook4.wav',
+    './sounds/rook5.wav',
 ];
 
 // Install event - cache assets
@@ -102,7 +102,7 @@ self.addEventListener('fetch', (event) => {
             }).catch(() => {
                 // Offline fallback - serve index.html for navigation
                 if (event.request.mode === 'navigate') {
-                    return caches.match('/index.html');
+                    return caches.match('./index.html');
                 }
                 return new Response('Offline - resource not available', {
                     status: 503,

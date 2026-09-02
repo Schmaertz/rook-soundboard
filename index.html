@@ -341,6 +341,7 @@
         // ===== STATE MANAGEMENT =====
         let audioContext = null;
         let audioBuffers = {};
+        let rawArrayBuffers = {}; // kept so buffers can be re-decoded if the AudioContext is recreated
         let audioSources = {};
         let gainNodes = {};
         let isLoaded = false;
@@ -349,6 +350,9 @@
         let masterVolume = 0.7;
         let longPressTimers = {};
         let contextResuming = false;
+        let contextRecreating = false;
+        let silentUnlockAudio = null;
+        let silentUnlockDone = false;
 
         // ===== INITIALIZATION =====
         window.addEventListener('DOMContentLoaded', initializeApp);
@@ -381,7 +385,7 @@
             if (audioContext === null) {
                 try {
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    console.log('AudioContext created:', audioContext.state);
+                    console.log('AudioContext created:', audioContext.state, 'sampleRate:', audioContext.sampleRate);
                 } catch (err) {
                     console.error('Failed to create AudioContext:', err);
                     alert('Web Audio API not supported on this device');
@@ -389,9 +393,85 @@
             }
         }
 
+        // iOS/WebKit sometimes leaves the AudioContext pinned to the sample rate of
+        // whatever output device was active when it was created. When the output
+        // route changes (e.g. switching to a Bluetooth speaker), the context can
+        // stay "running" but silently produce no audio because it no longer matches
+        // the hardware's actual sample rate. We detect that by comparing our
+        // context's sampleRate against a freshly probed one and recreate the
+        // context (re-decoding buffers into it) when they disagree.
+        async function detectRouteChangeAndRecreateIfNeeded() {
+            if (!audioContext || contextRecreating) return;
+
+            let probe;
+            try {
+                probe = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (err) {
+                return; // can't probe, nothing we can do
+            }
+
+            const hardwareSampleRate = probe.sampleRate;
+            try {
+                await probe.close();
+            } catch (e) { /* ignore */ }
+
+            if (hardwareSampleRate && hardwareSampleRate !== audioContext.sampleRate) {
+                console.warn(`Sample rate mismatch detected (context: ${audioContext.sampleRate}, hardware: ${hardwareSampleRate}). Recreating AudioContext for route change...`);
+                await recreateAudioContext();
+            }
+        }
+
+        async function recreateAudioContext() {
+            if (contextRecreating) return;
+            contextRecreating = true;
+
+            const oldContext = audioContext;
+
+            try {
+                // Stop anything currently playing on the old context - its buffers
+                // won't survive the swap.
+                Object.keys(audioSources).forEach((soundId) => {
+                    try {
+                        audioSources[soundId].stop();
+                    } catch (e) { /* already stopped */ }
+                });
+                audioSources = {};
+                gainNodes = {};
+                playingButtons.clear();
+
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('AudioContext recreated:', audioContext.state, 'sampleRate:', audioContext.sampleRate);
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume().catch(() => {});
+                }
+
+                // Re-decode any buffers we'd already loaded into the new context.
+                // decodeAudioData detaches the ArrayBuffer it's given, so decode a copy.
+                const soundIds = Object.keys(rawArrayBuffers);
+                for (const soundId of soundIds) {
+                    try {
+                        const bufferCopy = rawArrayBuffers[soundId].slice(0);
+                        audioBuffers[soundId] = await audioContext.decodeAudioData(bufferCopy);
+                    } catch (err) {
+                        console.error(`Failed to re-decode ${soundId} after context recreation:`, err);
+                        delete audioBuffers[soundId];
+                    }
+                }
+
+                if (oldContext) {
+                    try {
+                        await oldContext.close();
+                    } catch (e) { /* ignore */ }
+                }
+            } finally {
+                contextRecreating = false;
+            }
+        }
+
         async function ensureAudioContextRunning() {
             setupAudioContext();
-            
+
             if (!audioContext) {
                 throw new Error('AudioContext not available');
             }
@@ -429,8 +509,82 @@
                     }
                 }
             }
-            
+
+            // Catch the case where the output route (e.g. AirPlay/Bluetooth) changed
+            // while the context stayed "running" but silently mismatched sample rates.
+            await detectRouteChangeAndRecreateIfNeeded();
+
             return audioContext;
+        }
+
+        // ===== SILENT AUDIO UNLOCK (iOS media playback mode) =====
+        // iOS is more reliable at routing Web Audio output to a Bluetooth device
+        // once the page has played *something* through a plain HTMLMediaElement
+        // during a user gesture. We build a tiny silent WAV at runtime and play it
+        // once, synchronously within the first tap/click, as a belt-and-suspenders
+        // fallback alongside resuming the AudioContext.
+        function buildSilentWavDataUrl() {
+            // 1 channel, 8-bit, 8kHz PCM WAV with a single silent sample.
+            const sampleRate = 8000;
+            const bytesPerSample = 1;
+            const dataSize = 1;
+            const buffer = new ArrayBuffer(44 + dataSize);
+            const view = new DataView(buffer);
+
+            function writeString(offset, str) {
+                for (let i = 0; i < str.length; i++) {
+                    view.setUint8(offset + i, str.charCodeAt(i));
+                }
+            }
+
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + dataSize, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, 1, true); // mono
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * bytesPerSample, true);
+            view.setUint16(32, bytesPerSample, true);
+            view.setUint16(34, 8, true);
+            writeString(36, 'data');
+            view.setUint32(40, dataSize, true);
+            view.setUint8(44, 128); // silence for 8-bit PCM
+
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return 'data:audio/wav;base64,' + btoa(binary);
+        }
+
+        function getSilentUnlockAudio() {
+            if (!silentUnlockAudio) {
+                silentUnlockAudio = new Audio(buildSilentWavDataUrl());
+                silentUnlockAudio.preload = 'auto';
+                silentUnlockAudio.volume = 0;
+            }
+            return silentUnlockAudio;
+        }
+
+        // Must be called synchronously inside a user gesture handler (not after an
+        // await) so iOS credits the play() call as originating from the gesture.
+        function unlockAudioPlaybackMode() {
+            if (silentUnlockDone) return;
+            silentUnlockDone = true;
+            try {
+                const el = getSilentUnlockAudio();
+                const playPromise = el.play();
+                if (playPromise && typeof playPromise.then === 'function') {
+                    playPromise.then(() => el.pause()).catch((err) => {
+                        console.log('Silent unlock audio play failed (non-fatal):', err);
+                    });
+                }
+            } catch (err) {
+                console.log('Silent unlock audio failed (non-fatal):', err);
+            }
         }
 
         function createButtonGrid() {
@@ -453,10 +607,12 @@
                 button.addEventListener('click', async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
+                    // Must happen synchronously within the gesture, before any await.
+                    unlockAudioPlaybackMode();
                     try {
                         await ensureAudioContextRunning();
                         await loadSoundsIfNeeded();
-                        playSound(config.id);
+                        await playSound(config.id);
                     } catch (err) {
                         console.error('Error playing sound:', err);
                         document.getElementById('loadHint').textContent = '⚠ Error: ' + err.message;
@@ -547,6 +703,11 @@
                     throw new Error('AudioContext not initialized');
                 }
                 
+                // Keep a copy of the raw bytes so we can re-decode into a fresh
+                // AudioContext if the output route changes later (decodeAudioData
+                // detaches the buffer it's given).
+                rawArrayBuffers[soundId] = arrayBuffer.slice(0);
+
                 const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 audioBuffers[soundId] = audioBuffer;
                 console.log(`Decoded and loaded: ${fileName} (${audioBuffer.duration.toFixed(2)}s)`);
@@ -557,7 +718,12 @@
         }
 
         // ===== PLAYBACK CONTROL =====
-        function playSound(soundId) {
+        async function playSound(soundId) {
+            // Re-check right before playing: the route/state may have changed
+            // since the button was tapped (e.g. context got suspended again, or
+            // the output switched to/from a Bluetooth device).
+            await ensureAudioContextRunning();
+
             if (!audioBuffers[soundId]) {
                 console.warn(`No audio buffer for ${soundId}`);
                 return;
@@ -648,24 +814,25 @@
             });
         }
 
-        // Resume audio context on user interaction (iOS requirement)
-        document.addEventListener('click', async () => {
+        // Safety net: unlock the silent HTML5 audio element and resume the
+        // AudioContext on the very first user interaction anywhere on the page
+        // (not just a sound button), since iOS requires the gesture to be
+        // synchronous with the play()/resume() call.
+        document.addEventListener('click', () => {
+            unlockAudioPlaybackMode();
             if (audioContext && audioContext.state === 'suspended') {
-                try {
-                    await audioContext.resume();
-                } catch (err) {
+                audioContext.resume().catch(err => {
                     console.log('Could not resume AudioContext on click:', err);
-                }
+                });
             }
         }, { once: true });
 
-        document.addEventListener('touchstart', async () => {
+        document.addEventListener('touchstart', () => {
+            unlockAudioPlaybackMode();
             if (audioContext && audioContext.state === 'suspended') {
-                try {
-                    await audioContext.resume();
-                } catch (err) {
+                audioContext.resume().catch(err => {
                     console.log('Could not resume AudioContext on touch:', err);
-                }
+                });
             }
         }, { once: true });
     </script>
